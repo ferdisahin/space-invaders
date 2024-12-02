@@ -140,6 +140,7 @@ class Projectile {
         this.width = 4;
         this.height = 15;
         this.speed = 7;
+        this.toRemove = false;
     }
 
     draw() {
@@ -210,6 +211,7 @@ class EnemyProjectile {
         this.width = 4;
         this.height = 10;
         this.speed = 3; // Mermi hızını 5'ten 3'e düşürdüm
+        this.toRemove = false;
     }
 
     draw() {
@@ -299,18 +301,172 @@ class Game {
         this.powerUps = [];
         this.enemyProjectiles = [];
         this.gameStarted = false;
-        this.powerUpChance = 0.02; // 2% şans
-        this.enemyShootChance = 0.001; // Ateş etme şansını 0.005'ten 0.001'e düşürdüm
-        this.lastSoundTime = 0; // Ses kontrolü için zaman takibi
+        this.powerUpChance = 0.02;
+        this.enemyShootChance = 0.001;
+        this.lastSoundTime = 0;
         this.soundCooldowns = {
-            shoot: 250,    // Ateş sesi için 250ms bekleme
-            explosion: 200, // Patlama sesi için 200ms bekleme
-            powerUp: 300   // Güç yükseltme sesi için 300ms bekleme
+            shoot: 250,
+            explosion: 200,
+            powerUp: 300
         };
         this.currentLevel = 1;
-        this.maxLevel = 10; // Maksimum 10 seviye
+        this.maxLevel = 10;
         this.levelStarting = false;
         this.countdownValue = 3;
+        this.barriers = this.createBarriers();
+        this.ufoSpawnTimer = 0;
+        this.ufo = null;
+    }
+
+    createBarriers() {
+        const barriers = [];
+        const barrierCount = 4;
+        const barrierWidth = 60;
+        const barrierHeight = 40;
+        const spacing = (canvas.width - (barrierCount * barrierWidth)) / (barrierCount + 1);
+        
+        for (let i = 0; i < barrierCount; i++) {
+            const x = spacing + i * (barrierWidth + spacing);
+            const y = canvas.height - 150;
+            barriers.push({
+                x,
+                y,
+                width: barrierWidth,
+                height: barrierHeight,
+                grid: this.createBarrierGrid()
+            });
+        }
+        return barriers;
+    }
+
+    createBarrierGrid() {
+        const grid = [];
+        const shape = [
+            "XXXXXXXXXX",
+            "XXXXXXXXXX",
+            "XXXXXXXXXX",
+            "XXXXXXXXXX",
+            "XXXXXXXXXX",
+            "XXX    XXX",
+            "XX      XX"
+        ];
+
+        for (let y = 0; y < shape.length; y++) {
+            const row = [];
+            for (let x = 0; x < shape[y].length; x++) {
+                // Her blok için sağlamlık değeri ekle (1-3 arası)
+                row.push(shape[y][x] === 'X' ? 3 : 0);
+            }
+            grid.push(row);
+        }
+        return grid;
+    }
+
+    drawBarriers() {
+        this.barriers.forEach(barrier => {
+            const blockSize = barrier.width / 10;
+            
+            barrier.grid.forEach((row, rowIndex) => {
+                row.forEach((block, colIndex) => {
+                    if (block > 0) {
+                        // Sağlamlık seviyesine göre renk değiştir
+                        switch(block) {
+                            case 3:
+                                ctx.fillStyle = '#00ff00'; // Tam sağlam
+                                break;
+                            case 2:
+                                ctx.fillStyle = '#008800'; // Orta hasarlı
+                                break;
+                            case 1:
+                                ctx.fillStyle = '#004400'; // Çok hasarlı
+                                break;
+                        }
+                        ctx.fillRect(
+                            barrier.x + colIndex * blockSize,
+                            barrier.y + rowIndex * blockSize,
+                            blockSize,
+                            blockSize
+                        );
+                    }
+                });
+            });
+        });
+    }
+
+    damageBarrier(barrier, x, y) {
+        const blockSize = barrier.width / 10;
+        const relativeX = x - barrier.x;
+        const relativeY = y - barrier.y;
+        
+        const gridX = Math.floor(relativeX / blockSize);
+        const gridY = Math.floor(relativeY / blockSize);
+        
+        // Mermi çarpma noktasındaki bloğa hasar ver
+        if (gridY >= 0 && gridY < barrier.grid.length &&
+            gridX >= 0 && gridX < barrier.grid[0].length) {
+            
+            // Eğer blok varsa hasar ver
+            if (barrier.grid[gridY][gridX] > 0) {
+                barrier.grid[gridY][gridX]--;
+                
+                // Çevredeki bloklara rastgele hasar ver
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        const ny = gridY + dy;
+                        const nx = gridX + dx;
+                        if (ny >= 0 && ny < barrier.grid.length &&
+                            nx >= 0 && nx < barrier.grid[0].length &&
+                            barrier.grid[ny][nx] > 0 &&
+                            Math.random() < 0.2) { // %20 şansla çevre bloklara hasar
+                            barrier.grid[ny][nx] = Math.max(1, barrier.grid[ny][nx] - 1);
+                        }
+                    }
+                }
+                return true; // Hasar verildi
+            }
+        }
+        return false; // Hasar verilemedi
+    }
+
+    spawnUFO() {
+        if (!this.ufo && Math.random() < 0.001) {
+            const direction = Math.random() < 0.5 ? 1 : -1;
+            const x = direction === 1 ? -50 : canvas.width + 50;
+            this.ufo = {
+                x: x,
+                y: 30,
+                width: 40,
+                height: 20,
+                speed: 3 * direction,
+                points: Math.floor(Math.random() * 3 + 1) * 50
+            };
+        }
+    }
+
+    updateUFO() {
+        if (this.ufo) {
+            this.ufo.x += this.ufo.speed;
+            
+            // UFO ekrandan çıktı mı kontrol et
+            if (this.ufo.x < -100 || this.ufo.x > canvas.width + 100) {
+                this.ufo = null;
+            }
+        }
+    }
+
+    drawUFO() {
+        if (this.ufo) {
+            ctx.fillStyle = '#ff0000';
+            ctx.beginPath();
+            ctx.ellipse(
+                this.ufo.x + this.ufo.width / 2,
+                this.ufo.y + this.ufo.height / 2,
+                this.ufo.width / 2,
+                this.ufo.height / 2,
+                0, 0, Math.PI * 2
+            );
+            ctx.fill();
+        }
     }
 
     reset() {
@@ -320,11 +476,11 @@ class Game {
         this.powerUps = [];
         this.enemyProjectiles = [];
         this.keys = {};
-        this.score = 0;
+        this.score = this.score || 0;
         this.gameOver = false;
-        this.enemyRows = Math.min(3 + Math.floor((this.currentLevel - 1) / 2), 6); // Her 2 seviyede 1 sıra artış, maksimum 6 sıra
-        this.enemyCols = 8;
-        this.enemyPadding = 60;
+        this.enemyRows = Math.min(3 + Math.floor((this.currentLevel - 1) / 2), 6);
+        this.enemyCols = 11;
+        this.enemyPadding = 50;
         scoreEl.textContent = this.score;
         livesEl.textContent = this.player.lives;
         shieldEl.textContent = this.player.shield + '%';
@@ -333,13 +489,41 @@ class Game {
     }
 
     initEnemies() {
+        const startX = (canvas.width - (this.enemyCols * this.enemyPadding)) / 2;
         for (let row = 0; row < this.enemyRows; row++) {
             for (let col = 0; col < this.enemyCols; col++) {
-                const x = col * this.enemyPadding + 100;
-                const y = row * this.enemyPadding + 50;
+                const x = startX + col * this.enemyPadding;
+                const y = row * 50 + 50;
                 this.enemies.push(new Enemy(x, y, row % 3, this.currentLevel));
             }
         }
+    }
+
+    startLevel() {
+        this.levelStarting = true;
+        this.countdownValue = 3;
+        
+        // Reset positions for new level
+        this.player.x = canvas.width / 2 - this.player.width / 2;
+        this.player.y = canvas.height - this.player.height - 20;
+        this.projectiles = [];
+        this.enemyProjectiles = [];
+        this.powerUps = [];
+        this.enemies = [];
+        this.initEnemies();
+        
+        const countdown = () => {
+            if (this.countdownValue > 0) {
+                setTimeout(() => {
+                    this.countdownValue--;
+                    countdown();
+                }, 1000);
+            } else {
+                this.levelStarting = false;
+            }
+        };
+        
+        countdown();
     }
 
     setupEventListeners() {
@@ -408,8 +592,17 @@ class Game {
     }
 
     checkCollisions() {
+        // Bariyer çarpışmalarını kontrol et (hem oyuncu hem düşman mermileri için)
+        [...this.projectiles, ...this.enemyProjectiles].forEach(projectile => {
+            if (this.checkBarrierCollisions(projectile, this.projectiles.includes(projectile))) {
+                return; // Mermi bariyere çarptıysa diğer kontrolleri yapma
+            }
+        });
+
         // Düşman-mermi çarpışması
         this.projectiles.forEach((projectile, projectileIndex) => {
+            if (projectile.toRemove) return; // Eğer mermi zaten bariyere çarptıysa kontrol etme
+            
             this.enemies.forEach((enemy, enemyIndex) => {
                 if (
                     projectile.x < enemy.x + enemy.width &&
@@ -539,25 +732,6 @@ class Game {
         });
     }
 
-    startLevel() {
-        this.levelStarting = true;
-        this.countdownValue = 3;
-        
-        const countdown = () => {
-            if (this.countdownValue > 0) {
-                setTimeout(() => {
-                    this.countdownValue--;
-                    countdown();
-                }, 1000);
-            } else {
-                this.levelStarting = false;
-                this.initEnemies();
-            }
-        };
-        
-        countdown();
-    }
-
     drawLevelInfo() {
         ctx.fillStyle = '#fff';
         ctx.font = '40px "Press Start 2P"';
@@ -602,65 +776,51 @@ class Game {
             return;
         }
 
+        // Draw barriers
+        this.drawBarriers();
+
+        // Spawn and update UFO
+        this.spawnUFO();
+        this.updateUFO();
+        this.drawUFO();
+
         this.player.update(this.keys);
         this.player.draw();
 
-        // Düşmanların ateş etmesi
-        this.enemies.forEach(enemy => {
-            // Sadece ekranın alt yarısına yakın düşmanlar ateş edebilir
-            if (enemy.y > canvas.height / 3 && Math.random() < this.enemyShootChance) {
-                this.enemyProjectiles.push(new EnemyProjectile(
-                    enemy.x + enemy.width / 2,
-                    enemy.y + enemy.height
-                ));
-            }
-        });
-
+        // Update and check projectiles
         this.projectiles.forEach((projectile, index) => {
             projectile.update();
-            projectile.draw();
-
-            if (projectile.y < 0) {
+            
+            // Check UFO collision
+            if (this.ufo && this.checkCollisions(projectile, this.ufo)) {
+                this.score += this.ufo.points;
+                scoreEl.textContent = this.score;
+                this.explosions.push(new Explosion(this.ufo.x + this.ufo.width/2, this.ufo.y + this.ufo.height/2, '#ff0000'));
+                this.ufo = null;
+                projectile.toRemove = true;
+                this.playGameSound(explosionSound, 'explosion');
+            }
+            
+            this.checkBarrierCollisions(projectile, true);
+            if (projectile.toRemove || projectile.y < 0) {
                 this.projectiles.splice(index, 1);
+            } else {
+                projectile.draw();
             }
         });
 
         this.enemyProjectiles.forEach((projectile, index) => {
             projectile.update();
-            projectile.draw();
-
-            if (projectile.y > canvas.height) {
+            this.checkBarrierCollisions(projectile, false);
+            if (projectile.toRemove || projectile.y > canvas.height) {
                 this.enemyProjectiles.splice(index, 1);
+            } else {
+                projectile.draw();
             }
         });
 
-        this.powerUps.forEach((powerUp, index) => {
-            powerUp.update();
-            powerUp.draw();
-
-            if (powerUp.y > canvas.height) {
-                this.powerUps.splice(index, 1);
-            }
-        });
-
-        this.enemies.forEach(enemy => {
-            enemy.update();
-            enemy.draw();
-
-            if (enemy.y + enemy.height > this.player.y) {
-                this.gameOver = true;
-            }
-        });
-
-        this.explosions = this.explosions.filter(explosion => {
-            explosion.draw();
-            return !explosion.update();
-        });
-
-        this.checkCollisions();
-        this.checkEnemyMovement();
-
-        if (this.enemies.length === 0) {
+        // Check if all enemies are destroyed
+        if (this.enemies.length === 0 && !this.levelStarting) {
             if (this.currentLevel < this.maxLevel) {
                 this.currentLevel++;
                 this.startLevel();
@@ -669,11 +829,123 @@ class Game {
                 ctx.font = '40px "Press Start 2P"';
                 ctx.textAlign = 'center';
                 ctx.fillText('YOU WIN!', canvas.width / 2, canvas.height / 2);
-                this.gameOver = true;
             }
+            requestAnimationFrame(() => this.update());
+            return;
         }
 
+        this.enemies.forEach(enemy => {
+            enemy.update();
+            enemy.draw();
+
+            if (Math.random() < this.enemyShootChance && enemy.y > canvas.height * 0.3) {
+                this.enemyProjectiles.push(new EnemyProjectile(
+                    enemy.x + enemy.width / 2,
+                    enemy.y + enemy.height
+                ));
+            }
+        });
+
+        this.powerUps.forEach((powerUp, index) => {
+            powerUp.update();
+            powerUp.draw();
+            if (powerUp.y > canvas.height) {
+                this.powerUps.splice(index, 1);
+            }
+        });
+
+        this.explosions.forEach((explosion, index) => {
+            explosion.update();
+            explosion.draw();
+            if (explosion.particles.length === 0) {
+                this.explosions.splice(index, 1);
+            }
+        });
+
+        this.checkCollisions();
+        this.checkEnemyMovement();
+
         requestAnimationFrame(() => this.update());
+    }
+
+    checkBarrierCollisions(projectile, isPlayerProjectile) {
+        for (let barrier of this.barriers) {
+            // Mermi bariyerin alanı içinde mi kontrol et
+            if (projectile.x < barrier.x + barrier.width &&
+                projectile.x + projectile.width > barrier.x &&
+                projectile.y < barrier.y + barrier.height &&
+                projectile.y + projectile.height > barrier.y) {
+                
+                // Çarpışma noktasındaki bloğu bul
+                const blockSize = barrier.width / 10;
+                const relativeX = projectile.x - barrier.x;
+                const relativeY = projectile.y - barrier.y;
+                const gridX = Math.floor(relativeX / blockSize);
+                const gridY = Math.floor(relativeY / blockSize);
+
+                // Hasar yarıçapı ve şiddetini ayarla
+                const damageRadius = 2; // Daha geniş hasar alanı
+                const centerDamage = 2; // Merkezdeki hasar miktarı
+                let hasHitBlock = false;
+
+                // Hasar yarıçapı içindeki tüm bloklara hasar ver
+                for (let dy = -damageRadius; dy <= damageRadius; dy++) {
+                    for (let dx = -damageRadius; dx <= damageRadius; dx++) {
+                        const ny = gridY + dy;
+                        const nx = gridX + dx;
+                        
+                        // Blok koordinatları geçerli mi ve blok var mı kontrol et
+                        if (ny >= 0 && ny < barrier.grid.length &&
+                            nx >= 0 && nx < barrier.grid[0].length &&
+                            barrier.grid[ny][nx] > 0) {
+                            
+                            // Merkezden uzaklığa göre hasar hesapla
+                            const distance = Math.sqrt(dx * dx + dy * dy);
+                            if (distance <= damageRadius) {
+                                // Merkeze yakın bloklar daha çok hasar alır
+                                const damage = Math.ceil(centerDamage * (1 - distance / (damageRadius + 1)));
+                                
+                                // Rastgele ek hasar şansı
+                                const randomDamage = Math.random() < 0.4 ? 1 : 0; // %40 şansla ekstra hasar
+                                
+                                // Toplam hasarı uygula
+                                barrier.grid[ny][nx] = Math.max(0, barrier.grid[ny][nx] - (damage + randomDamage));
+                                hasHitBlock = true;
+                            }
+                        }
+                    }
+                }
+
+                if (hasHitBlock) {
+                    // Mermiyi yok et ve patlama efekti ekle
+                    projectile.toRemove = true;
+                    
+                    // Ana patlama efekti
+                    this.explosions.push(new Explosion(
+                        projectile.x,
+                        projectile.y,
+                        isPlayerProjectile ? '#00ff00' : '#ff0000'
+                    ));
+                    
+                    // Ek küçük patlama efektleri
+                    for (let i = 0; i < 2; i++) {
+                        const offsetX = (Math.random() - 0.5) * 20;
+                        const offsetY = (Math.random() - 0.5) * 20;
+                        this.explosions.push(new Explosion(
+                            projectile.x + offsetX,
+                            projectile.y + offsetY,
+                            isPlayerProjectile ? '#00ff00' : '#ff0000'
+                        ));
+                    }
+                    
+                    // Ses efekti ekle
+                    this.playGameSound(explosionSound, 'explosion');
+                    
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }
 
